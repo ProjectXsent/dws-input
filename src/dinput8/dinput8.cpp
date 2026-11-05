@@ -925,16 +925,29 @@ static HMODULE LoadRealDInput8() {
     return real;
 }
 
-// Only wrap interfaces requested by the game exe itself. SDL (SDL3.dll, or
-// statically linked into this DLL) may also call DirectInput8Create to enumerate
-// controllers; it must see the real, unfiltered DirectInput.
-static bool CallerIsGameExe(void* addr) {
+static HMODULE g_self = nullptr;   // this DLL
+
+// Wrap every DirectInput8Create call EXCEPT the ones SDL makes itself while it
+// enumerates controllers (SDL3.dll, or SDL statically linked into this DLL): SDL
+// must see the real, unfiltered DirectInput. Everything else is wrapped, including
+// calls made by wrapper/mod DLLs on the game's behalf and calls from exe code that
+// is not inside a normal module (packed/protected exes). `who` receives the caller's
+// module name for the log.
+static bool ShouldWrap(void* addr, char* who, size_t n) {
     HMODULE m = nullptr;
     if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
                             GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                            (LPCSTR)addr, &m))
-        return false;
-    return m == GetModuleHandleA(nullptr);
+                            (LPCSTR)addr, &m) || !m) {
+        snprintf(who, n, "(not inside any module)");
+        return true;
+    }
+    char path[MAX_PATH] = {};
+    GetModuleFileNameA(m, path, MAX_PATH);
+    const char* base = strrchr(path, '\\');
+    snprintf(who, n, "%s%s", base ? base + 1 : path, m == GetModuleHandleA(nullptr) ? " (game exe)" : "");
+    if (m == g_self) return false;
+    if (_strnicmp(base ? base + 1 : path, "SDL3", 4) == 0) return false;
+    return true;
 }
 
 extern "C" HRESULT WINAPI DirectInput8Create(HINSTANCE h, DWORD ver, REFIID riid, LPVOID* out, LPUNKNOWN outer) {
@@ -947,10 +960,11 @@ extern "C" HRESULT WINAPI DirectInput8Create(HINSTANCE h, DWORD ver, REFIID riid
     if (!fn) return E_FAIL;
 
     HRESULT hr = fn(h, ver, riid, out, outer);
-    bool fromGame = CallerIsGameExe(caller);
-    Log("DirectInput8Create ver=%lx hr=%lx fromGame=%d", ver, hr, fromGame ? 1 : 0);
+    char who[MAX_PATH + 32];
+    bool wrap = ShouldWrap(caller, who, sizeof who);
+    Log("DirectInput8Create ver=%lx hr=%lx caller=%s wrap=%d", ver, hr, who, wrap ? 1 : 0);
 
-    if (SUCCEEDED(hr) && fromGame) {
+    if (SUCCEEDED(hr) && wrap) {
         if (riid == IID_IDirectInput8A)
             *out = new ProxyDI8A((IDirectInput8A*)*out);
         else if (riid == IID_IDirectInput8W)
@@ -962,6 +976,7 @@ extern "C" HRESULT WINAPI DirectInput8Create(HINSTANCE h, DWORD ver, REFIID riid
 BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(h);
+        g_self = h;
         GetModuleFileNameA(h, g_dir, MAX_PATH);
         if (char* s = strrchr(g_dir, '\\')) s[1] = 0;
         LoadConfig();
