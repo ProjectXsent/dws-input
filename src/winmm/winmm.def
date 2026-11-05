@@ -1,0 +1,7 @@
+LIBRARY winmm
+EXPORTS
+    joyGetNumDevs
+    joyGetDevCapsA
+    joyGetDevCapsW
+    joyGetPos
+    joyGetPosEx

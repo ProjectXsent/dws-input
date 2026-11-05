@@ -1,0 +1,6 @@
+{
+  "name": "dws-input",
+  "version": "1.0.0",
+  "description": "SDL3 gamepad proxies for winmm, dinput and dinput8",
+  "dependencies": [ "sdl3" ]
+}
