@@ -868,7 +868,20 @@ public:
 
     HRESULT STDMETHODCALLTYPE CreateDevice(REFGUID g, typename T::Device** o, LPUNKNOWN u) override {
         if (g == GUID_FakePad) { *o = new FakePadT<W>(); Log("CreateDevice: fake pad"); return DI_OK; }
-        return real->CreateDevice(g, o, u);
+        HRESULT hr = real->CreateDevice(g, o, u);
+        if (SUCCEEDED(hr) && g_cfg.hideReal && o && *o) {
+            typename T::DevInst di = { sizeof(di) };
+            if (SUCCEEDED((*o)->GetDeviceInfo(&di))) {
+                BYTE t = GET_DIDEVICE_TYPE(di.dwDevType);
+                if (t != DI8DEVTYPE_KEYBOARD && t != DI8DEVTYPE_MOUSE) {
+                    if constexpr (W) Log("blocked real device: %ls", di.tszProductName);
+                    else             Log("blocked real device: %s", di.tszProductName);
+                    (*o)->Release(); *o = nullptr;
+                    return DIERR_DEVICENOTREG;
+                }
+            }
+        }
+        return hr;
     }
 
     HRESULT STDMETHODCALLTYPE EnumDevices(DWORD type, typename T::EnumDevCb cb, LPVOID user, DWORD flags) override {
